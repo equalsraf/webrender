@@ -59,15 +59,15 @@ impl ImageGenerator {
     }
 }
 
-impl webrender::ExternalImageHandler for ImageGenerator {
-    fn lock(&mut self, _key: ExternalImageId, channel_index: u8) -> webrender::ExternalImage {
+impl ExternalImageHandler for ImageGenerator {
+    fn lock(&mut self, _key: ExternalImageId, channel_index: u8) -> ExternalImage {
         self.generate_image(channel_index as u32);
-        webrender::ExternalImage {
+        ExternalImage {
             u0: 0.0,
             v0: 0.0,
             u1: 1.0,
             v1: 1.0,
-            source: webrender::ExternalImageSource::RawData(&self.current_image),
+            source: ExternalImageSource::RawData(&self.current_image),
         }
     }
     fn unlock(&mut self, _key: ExternalImageId, _channel_index: u8) {}
@@ -290,8 +290,8 @@ impl Example for App {
     fn get_image_handlers(
         &mut self,
         _gl: &gl::Gl,
-    ) -> (Option<Box<webrender::ExternalImageHandler>>, 
-          Option<Box<webrender::OutputImageHandler>>) {
+    ) -> (Option<Box<ExternalImageHandler>>, 
+          Option<Box<OutputImageHandler>>) {
         (Some(Box::new(ImageGenerator::new())), None)
     }
 }

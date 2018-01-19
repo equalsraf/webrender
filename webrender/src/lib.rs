@@ -163,8 +163,7 @@ pub extern crate webrender_api;
 
 #[doc(hidden)]
 pub use device::{build_shader_strings, ProgramCache, ReadPixelsFormat, UploadMethod, VertexUsageHint};
-pub use renderer::{CpuProfile, DebugFlags, GpuProfile, OutputImageHandler, RendererKind};
-pub use renderer::{ExternalImage, ExternalImageHandler, ExternalImageSource};
+pub use renderer::{CpuProfile, DebugFlags, GpuProfile, RendererKind};
 pub use renderer::{GraphicsApi, GraphicsApiInfo, Renderer, RendererOptions};
 pub use renderer::{RendererStats, ThreadListener};
 pub use renderer::MAX_VERTEX_TEXTURE_WIDTH;

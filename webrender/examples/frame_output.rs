@@ -40,7 +40,7 @@ struct ExternalHandler {
     texture_id: gl::GLuint
 }
 
-impl webrender::OutputImageHandler for OutputHandler {
+impl OutputImageHandler for OutputHandler {
     fn lock(&mut self, _id: PipelineId) -> Option<(u32, DeviceIntSize)> {
         Some((self.texture_id, DeviceIntSize::new(500, 500)))
     }
@@ -48,14 +48,14 @@ impl webrender::OutputImageHandler for OutputHandler {
     fn unlock(&mut self, _id: PipelineId) {}
 }
 
-impl webrender::ExternalImageHandler for ExternalHandler {
-    fn lock(&mut self, _key: ExternalImageId, _channel_index: u8) -> webrender::ExternalImage {
-        webrender::ExternalImage {
+impl ExternalImageHandler for ExternalHandler {
+    fn lock(&mut self, _key: ExternalImageId, _channel_index: u8) -> ExternalImage {
+        ExternalImage {
             u0: 0.0,
             v0: 0.0,
             u1: 1.0,
             v1: 1.0,
-            source: webrender::ExternalImageSource::NativeTexture(self.texture_id),
+            source: ExternalImageSource::NativeTexture(self.texture_id),
         }
     }
     fn unlock(&mut self, _key: ExternalImageId, _channel_index: u8) {}
@@ -173,8 +173,8 @@ impl Example for App {
     fn get_image_handlers(
         &mut self,
         gl: &gl::Gl,
-    ) -> (Option<Box<webrender::ExternalImageHandler>>,
-          Option<Box<webrender::OutputImageHandler>>) {
+    ) -> (Option<Box<ExternalImageHandler>>,
+          Option<Box<OutputImageHandler>>) {
         let texture_id = gl.gen_textures(1)[0];
 
         gl.bind_texture(gl::TEXTURE_2D, texture_id);

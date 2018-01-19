@@ -82,8 +82,8 @@ pub trait Example {
     fn get_image_handlers(
         &mut self,
         _gl: &gl::Gl,
-    ) -> (Option<Box<webrender::ExternalImageHandler>>,
-          Option<Box<webrender::OutputImageHandler>>) {
+    ) -> (Option<Box<ExternalImageHandler>>,
+          Option<Box<OutputImageHandler>>) {
         (None, None)
     }
     fn draw_custom(&self, _gl: &gl::Gl) {

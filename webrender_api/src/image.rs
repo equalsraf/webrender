@@ -7,6 +7,8 @@ use {TileOffset, TileSize};
 use IdNamespace;
 use font::{FontInstanceKey, FontKey, FontTemplate};
 use std::sync::Arc;
+use units::DeviceIntSize;
+use api::PipelineId;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -197,4 +199,53 @@ pub enum BlobImageError {
 pub struct BlobImageRequest {
     pub key: ImageKey,
     pub tile: Option<TileOffset>,
+}
+
+pub enum ExternalImageSource<'a> {
+    RawData(&'a [u8]),  // raw buffers.
+    NativeTexture(u32), // It's a gl::GLuint texture handle
+    Invalid,
+}
+
+/// The interfaces that an application can implement to support providing
+/// external image buffers.
+/// When the the application passes an external image to WR, it should kepp that
+/// external image life time. People could check the epoch id in RenderNotifier
+/// at the client side to make sure that the external image is not used by WR.
+/// Then, do the clean up for that external image.
+pub trait ExternalImageHandler {
+    /// Lock the external image. Then, WR could start to read the image content.
+    /// The WR client should not change the image content until the unlock()
+    /// call.
+    fn lock(&mut self, key: ExternalImageId, channel_index: u8) -> ExternalImage;
+    /// Unlock the external image. The WR should not read the image content
+    /// after this call.
+    fn unlock(&mut self, key: ExternalImageId, channel_index: u8);
+}
+
+/// The data that an external client should provide about
+/// an external image. The timestamp is used to test if
+/// the renderer should upload new texture data this
+/// frame. For instance, if providing video frames, the
+/// application could call wr.render() whenever a new
+/// video frame is ready. If the callback increments
+/// the returned timestamp for a given image, the renderer
+/// will know to re-upload the image data to the GPU.
+/// Note that the UV coords are supplied in texel-space!
+pub struct ExternalImage<'a> {
+    pub u0: f32,
+    pub v0: f32,
+    pub u1: f32,
+    pub v1: f32,
+    pub source: ExternalImageSource<'a>,
+}
+
+/// Allows callers to receive a texture with the contents of a specific
+/// pipeline copied to it. Lock should return the native texture handle
+/// and the size of the texture. Unlock will only be called if the lock()
+/// call succeeds, when WR has issued the GL commands to copy the output
+/// to the texture handle.
+pub trait OutputImageHandler {
+    fn lock(&mut self, pipeline_id: PipelineId) -> Option<(u32, DeviceIntSize)>;
+    fn unlock(&mut self, pipeline_id: PipelineId);
 }
