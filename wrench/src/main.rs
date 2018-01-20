@@ -71,7 +71,6 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 use std::rc::Rc;
 use std::sync::mpsc::{channel, Sender, Receiver};
-use webrender::DebugFlags;
 use webrender::api::*;
 use wrench::{Wrench, WrenchThing};
 use yaml_frame_reader::YamlFrameReader;

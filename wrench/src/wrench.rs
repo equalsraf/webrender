@@ -19,7 +19,6 @@ use std::sync::{Arc, Mutex};
 use time;
 use webrender;
 use webrender::api::*;
-use webrender::{DebugFlags, RendererStats};
 use yaml_frame_writer::YamlFrameWriterReceiver;
 use {WindowWrapper, BLACK_COLOR, WHITE_COLOR};
 

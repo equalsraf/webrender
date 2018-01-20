@@ -2566,16 +2566,6 @@ impl Renderer {
         }
     }
 
-    /// Set a callback for handling external images.
-    pub fn set_external_image_handler(&mut self, handler: Box<ExternalImageHandler>) {
-        self.external_image_handler = Some(handler);
-    }
-
-    /// Set a callback for handling external outputs.
-    pub fn set_output_image_handler(&mut self, handler: Box<OutputImageHandler>) {
-        self.output_image_handler = Some(handler);
-    }
-
     /// Retrieve (and clear) the current list of recorded frame profiles.
     pub fn get_frame_profiles(&mut self) -> (Vec<CpuProfile>, Vec<GpuProfile>) {
         let cpu_profiles = self.cpu_profiles.drain(..).collect();
@@ -4401,10 +4391,14 @@ impl Renderer {
 }
 
 impl RendererTrait for Renderer {
-    /// Renders the current frame.
-    ///
-    /// A Frame is supplied by calling [`generate_frame()`][genframe].
-    /// [genframe]: ../../webrender_api/struct.DocumentApi.html#method.generate_frame
+    fn set_external_image_handler(&mut self, handler: Box<ExternalImageHandler>) {
+        self.external_image_handler = Some(handler);
+    }
+
+    fn set_output_image_handler(&mut self, handler: Box<OutputImageHandler>) {
+        self.output_image_handler = Some(handler);
+    }
+
     fn render(
         &mut self,
         framebuffer_size: DeviceUintSize,
@@ -4412,7 +4406,6 @@ impl RendererTrait for Renderer {
         self.render_impl(Some(framebuffer_size))
     }
 
-    /// Returns the Epoch of the current frame in a pipeline.
     fn current_epoch(&self, pipeline_id: PipelineId) -> Option<Epoch> {
         self.pipeline_epoch_map.get(&pipeline_id).cloned()
     }
@@ -4440,9 +4433,6 @@ impl RendererTrait for Renderer {
         self.debug_flags = flags;
     }
 
-    /// Processes the result queue.
-    ///
-    /// Should be called before `render()`, as texture cache updates are done here.
     fn update(&mut self) {
         profile_scope!("update");
 

@@ -7,6 +7,7 @@ use {DeviceUintSize, FontInstanceKey, FontInstanceOptions};
 use {FontInstancePlatformOptions, FontKey, FontVariation, GlyphDimensions, GlyphKey, ImageData};
 use {ImageDescriptor, ImageKey, ItemTag, LayoutPoint, LayoutSize, LayoutTransform, LayoutVector2D};
 use {NativeFontHandle, WorldPoint};
+use {OutputImageHandler, ExternalImageHandler};
 use app_units::Au;
 use channel::{self, MsgSender, Payload, PayloadSender, PayloadSenderHelperMethods};
 use std::cell::Cell;
@@ -1020,11 +1021,23 @@ impl RendererStats {
 }
 
 pub trait Renderer {
+    /// Set a callback for handling external images.
+    fn set_external_image_handler(&mut self, handler: Box<ExternalImageHandler>);
+    /// Set a callback for handling external outputs.
+    fn set_output_image_handler(&mut self, handler: Box<OutputImageHandler>);
     fn deinit(self);
     fn layers_are_bouncing_back(&self) -> bool;
+    /// Processes the result queue.
+    ///
+    /// Should be called before `render()`, as texture cache updates are done here.
     fn update(&mut self);
+    /// Returns the Epoch of the current frame in a pipeline.
     fn current_epoch(&self, pipeline_id: PipelineId) -> Option<Epoch>;
     fn set_debug_flags(&mut self, flags: DebugFlags);
     fn get_debug_flags(&self) -> DebugFlags;
+    /// Renders the current frame.
+    ///
+    /// A Frame is supplied by calling [`generate_frame()`][genframe].
+    /// [genframe]: ../../webrender_api/struct.DocumentApi.html#method.generate_frame
     fn render(&mut self, framebuffer_size: DeviceUintSize) -> Result<RendererStats, Vec<RendererError>>;
 }
