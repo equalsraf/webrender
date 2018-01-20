@@ -13,6 +13,7 @@ use std::cell::Cell;
 use std::fmt;
 use std::marker::PhantomData;
 use std::path::PathBuf;
+use std::io;
 
 pub type TileSize = u16;
 /// Documents are rendered in the ascending order of their associated layer values.
@@ -956,4 +957,74 @@ pub trait RenderNotifier: Send {
         unimplemented!()
     }
     fn shut_down(&self) {}
+}
+
+bitflags! {
+    #[derive(Default)]
+    pub struct DebugFlags: u32 {
+        const PROFILER_DBG      = 1 << 0;
+        const RENDER_TARGET_DBG = 1 << 1;
+        const TEXTURE_CACHE_DBG = 1 << 2;
+        const ALPHA_PRIM_DBG    = 1 << 3;
+        const GPU_TIME_QUERIES  = 1 << 4;
+        const GPU_SAMPLE_QUERIES= 1 << 5;
+        const DISABLE_BATCHING  = 1 << 6;
+        const EPOCHS            = 1 << 7;
+        const COMPACT_PROFILER  = 1 << 8;
+    }
+}
+
+// Some basic statistics about the rendered scene
+// that we can use in wrench reftests to ensure that
+// tests are batching and/or allocating on render
+// targets as we expect them to.
+pub struct RendererStats {
+    pub total_draw_calls: usize,
+    pub alpha_target_count: usize,
+    pub color_target_count: usize,
+}
+
+#[derive(Clone, Debug)]
+pub enum ShaderError {
+    Compilation(String, String), // name, error mssage
+    Link(String, String),        // name, error message
+}
+
+#[derive(Debug)]
+pub enum RendererError {
+    Shader(ShaderError),
+    Thread(io::Error),
+    MaxTextureSize,
+}
+
+impl From<ShaderError> for RendererError {
+    fn from(err: ShaderError) -> Self {
+        RendererError::Shader(err)
+    }
+}
+
+impl From<io::Error> for RendererError {
+    fn from(err: io::Error) -> Self {
+        RendererError::Thread(err)
+    }
+}
+
+impl RendererStats {
+    pub fn empty() -> Self {
+        RendererStats {
+            total_draw_calls: 0,
+            alpha_target_count: 0,
+            color_target_count: 0,
+        }
+    }
+}
+
+pub trait Renderer {
+    fn deinit(self);
+    fn layers_are_bouncing_back(&self) -> bool;
+    fn update(&mut self);
+    fn current_epoch(&self, pipeline_id: PipelineId) -> Option<Epoch>;
+    fn set_debug_flags(&mut self, flags: DebugFlags);
+    fn get_debug_flags(&self) -> DebugFlags;
+    fn render(&mut self, framebuffer_size: DeviceUintSize) -> Result<RendererStats, Vec<RendererError>>;
 }

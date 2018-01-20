@@ -4,7 +4,7 @@
 
 use super::shader_source;
 use api::{ColorF, ImageDescriptor, ImageFormat};
-use api::{DeviceIntPoint, DeviceIntRect, DeviceUintRect, DeviceUintSize};
+use api::{DeviceIntPoint, DeviceIntRect, DeviceUintRect, DeviceUintSize, ShaderError};
 use euclid::Transform3D;
 use gleam::gl;
 use internal_types::{FastHashMap, RenderTargetInfo};
@@ -636,12 +636,6 @@ impl UniformLocation {
 
 pub struct Capabilities {
     pub supports_multisampling: bool,
-}
-
-#[derive(Clone, Debug)]
-pub enum ShaderError {
-    Compilation(String, String), // name, error mssage
-    Link(String, String),        // name, error message
 }
 
 pub struct Device {

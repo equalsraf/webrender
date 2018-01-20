@@ -13,10 +13,11 @@ use api::{BlobImageRenderer, ColorF, ColorU, DeviceIntPoint, DeviceIntRect, Devi
 use api::{DeviceUintPoint, DeviceUintRect, DeviceUintSize, DocumentId, Epoch, ExternalImageId};
 use api::{ExternalImageType, FontRenderMode, ImageFormat, PipelineId, RenderApiSender, ExternalImageSource};
 use api::{RenderNotifier, YUV_COLOR_SPACES, YUV_FORMATS, YuvColorSpace, YuvFormat, channel};
-use api::{ExternalImageHandler, ExternalImage, OutputImageHandler};
+use api::{ExternalImageHandler, ExternalImage, OutputImageHandler, DebugFlags, RendererStats, RendererError, ShaderError};
 #[cfg(not(feature = "debugger"))]
 use api::ApiMsg;
 use api::DebugCommand;
+use api::Renderer as RendererTrait;
 #[cfg(not(feature = "debugger"))]
 use api::channel::MsgSender;
 use batch::{BatchKey, BatchKind, BatchTextures, BrushBatchKind};
@@ -30,7 +31,7 @@ use debug_server::{self, DebugServer};
 use device::{DepthFunction, Device, FrameId, Program, UploadMethod, Texture,
              VertexDescriptor, PBO};
 use device::{ExternalTexture, FBOId, TextureSlot, VertexAttribute, VertexAttributeKind};
-use device::{FileWatcherHandler, ShaderError, TextureFilter, TextureTarget,
+use device::{FileWatcherHandler, TextureFilter, TextureTarget,
              VertexUsageHint, VAO, VBO, CustomVAO};
 use device::{ProgramCache, ReadPixelsFormat};
 use euclid::{rect, Transform3D};
@@ -248,21 +249,6 @@ impl BatchKind {
             }
             BatchKind::Transformable(_, batch_kind) => batch_kind.gpu_sampler_tag(),
         }
-    }
-}
-
-bitflags! {
-    #[derive(Default)]
-    pub struct DebugFlags: u32 {
-        const PROFILER_DBG      = 1 << 0;
-        const RENDER_TARGET_DBG = 1 << 1;
-        const TEXTURE_CACHE_DBG = 1 << 2;
-        const ALPHA_PRIM_DBG    = 1 << 3;
-        const GPU_TIME_QUERIES  = 1 << 4;
-        const GPU_SAMPLE_QUERIES= 1 << 5;
-        const DISABLE_BATCHING  = 1 << 6;
-        const EPOCHS            = 1 << 7;
-        const COMPACT_PROFILER  = 1 << 8;
     }
 }
 
@@ -1683,25 +1669,6 @@ pub struct Renderer {
     capture: RendererCapture,
 }
 
-#[derive(Debug)]
-pub enum RendererError {
-    Shader(ShaderError),
-    Thread(std::io::Error),
-    MaxTextureSize,
-}
-
-impl From<ShaderError> for RendererError {
-    fn from(err: ShaderError) -> Self {
-        RendererError::Shader(err)
-    }
-}
-
-impl From<std::io::Error> for RendererError {
-    fn from(err: std::io::Error) -> Self {
-        RendererError::Thread(err)
-    }
-}
-
 impl Renderer {
     /// Initializes webrender and creates a `Renderer` and `RenderApiSender`.
     ///
@@ -2340,11 +2307,6 @@ impl Renderer {
             (color_space as usize)
     }
 
-    /// Returns the Epoch of the current frame in a pipeline.
-    pub fn current_epoch(&self, pipeline_id: PipelineId) -> Option<Epoch> {
-        self.pipeline_epoch_map.get(&pipeline_id).cloned()
-    }
-
     /// Returns a HashMap containing the pipeline ids that have been received by the renderer and
     /// their respective epochs since the last time the method was called.
     pub fn flush_rendered_epochs(&mut self) -> FastHashMap<PipelineId, Epoch> {
@@ -2355,86 +2317,6 @@ impl Renderer {
     // shader programs got activated in the mean time
     pub fn update_program_cache(&mut self, cached_programs: Rc<ProgramCache>) {
         self.device.update_program_cache(cached_programs);
-    }
-
-    /// Processes the result queue.
-    ///
-    /// Should be called before `render()`, as texture cache updates are done here.
-    pub fn update(&mut self) {
-        profile_scope!("update");
-
-        // Pull any pending results and return the most recent.
-        while let Ok(msg) = self.result_rx.try_recv() {
-            match msg {
-                ResultMsg::PublishDocument(
-                    document_id,
-                    mut doc,
-                    texture_update_list,
-                    profile_counters,
-                ) => {
-                    //TODO: associate `document_id` with target window
-                    self.pending_texture_updates.push(texture_update_list);
-                    self.pending_gpu_cache_updates.extend(doc.frame.gpu_cache_updates.take());
-                    self.backend_profile_counters = profile_counters;
-
-                    // Update the list of available epochs for use during reftests.
-                    // This is a workaround for https://github.com/servo/servo/issues/13149.
-                    for (pipeline_id, epoch) in &doc.pipeline_epoch_map {
-                        self.pipeline_epoch_map.insert(*pipeline_id, *epoch);
-                    }
-
-                    // Add a new document to the active set, expressed as a `Vec` in order
-                    // to re-order based on `DocumentLayer` during rendering.
-                    match self.active_documents.iter().position(|&(id, _)| id == document_id) {
-                        Some(pos) => {
-                            // If the document we are replacing must be drawn
-                            // (in order to update the texture cache), issue
-                            // a render just to off-screen targets.
-                            if self.active_documents[pos].1.frame.must_be_drawn() {
-                                self.render_impl(None).ok();
-                            }
-                            self.active_documents[pos].1 = doc;
-                        }
-                        None => self.active_documents.push((document_id, doc)),
-                    }
-                }
-                ResultMsg::UpdateResources {
-                    updates,
-                    cancel_rendering,
-                } => {
-                    self.pending_texture_updates.push(updates);
-                    self.update_texture_cache();
-                    // If we receive a `PublishDocument` message followed by this one
-                    // within the same update we need ot cancel the frame because we
-                    // might have deleted the resources in use in the frame due to a
-                    // memory pressure event.
-                    if cancel_rendering {
-                        self.active_documents.clear();
-                    }
-                }
-                ResultMsg::RefreshShader(path) => {
-                    self.pending_shader_updates.push(path);
-                }
-                ResultMsg::DebugOutput(output) => match output {
-                    DebugOutput::FetchDocuments(string) |
-                    DebugOutput::FetchClipScrollTree(string) => {
-                        self.debug_server.send(string);
-                    }
-                    #[cfg(feature = "capture")]
-                    DebugOutput::SaveCapture(config, deferred) => {
-                        self.save_capture(config, deferred);
-                    }
-                    #[cfg(feature = "capture")]
-                    DebugOutput::LoadCapture(root) => {
-                        self.active_documents.clear();
-                        self.load_capture(root);
-                    }
-                },
-                ResultMsg::DebugCommand(command) => {
-                    self.handle_debug_command(command);
-                }
-            }
-        }
     }
 
     #[cfg(not(feature = "debugger"))]
@@ -2727,17 +2609,6 @@ impl Renderer {
         false
     }
 
-    /// Renders the current frame.
-    ///
-    /// A Frame is supplied by calling [`generate_frame()`][genframe].
-    /// [genframe]: ../../webrender_api/struct.DocumentApi.html#method.generate_frame
-    pub fn render(
-        &mut self,
-        framebuffer_size: DeviceUintSize,
-    ) -> Result<RendererStats, Vec<RendererError>> {
-        self.render_impl(Some(framebuffer_size))
-    }
-
     // If framebuffer_size is None, don't render
     // to the main frame buffer. This is useful
     // to update texture cache render tasks but
@@ -2906,12 +2777,6 @@ impl Renderer {
         } else {
             Err(mem::replace(&mut self.renderer_errors, Vec::new()))
         }
-    }
-
-    pub fn layers_are_bouncing_back(&self) -> bool {
-        self.active_documents
-            .iter()
-            .any(|&(_, ref render_doc)| !render_doc.layers_bouncing_back.is_empty())
     }
 
     fn prepare_gpu_cache(&mut self, frame: &Frame) {
@@ -4372,29 +4237,6 @@ impl Renderer {
         &mut self.debug
     }
 
-    pub fn get_debug_flags(&self) -> DebugFlags {
-        self.debug_flags
-    }
-
-    pub fn set_debug_flags(&mut self, flags: DebugFlags) {
-        if let Some(enabled) = flag_changed(self.debug_flags, flags, DebugFlags::GPU_TIME_QUERIES) {
-            if enabled {
-                self.gpu_profile.enable_timers();
-            } else {
-                self.gpu_profile.disable_timers();
-            }
-        }
-        if let Some(enabled) = flag_changed(self.debug_flags, flags, DebugFlags::GPU_SAMPLE_QUERIES) {
-            if enabled {
-                self.gpu_profile.enable_samplers();
-            } else {
-                self.gpu_profile.disable_samplers();
-            }
-        }
-
-        self.debug_flags = flags;
-    }
-
     pub fn set_debug_flag(&mut self, flag: DebugFlags, enabled: bool) {
         let mut new_flags = self.debug_flags;
         new_flags.set(flag, enabled);
@@ -4556,9 +4398,136 @@ impl Renderer {
         self.device.end_frame();
         (size, texels)
     }
+}
+
+impl RendererTrait for Renderer {
+    /// Renders the current frame.
+    ///
+    /// A Frame is supplied by calling [`generate_frame()`][genframe].
+    /// [genframe]: ../../webrender_api/struct.DocumentApi.html#method.generate_frame
+    fn render(
+        &mut self,
+        framebuffer_size: DeviceUintSize,
+    ) -> Result<RendererStats, Vec<RendererError>> {
+        self.render_impl(Some(framebuffer_size))
+    }
+
+    /// Returns the Epoch of the current frame in a pipeline.
+    fn current_epoch(&self, pipeline_id: PipelineId) -> Option<Epoch> {
+        self.pipeline_epoch_map.get(&pipeline_id).cloned()
+    }
+
+    fn get_debug_flags(&self) -> DebugFlags {
+        self.debug_flags
+    }
+
+    fn set_debug_flags(&mut self, flags: DebugFlags) {
+        if let Some(enabled) = flag_changed(self.debug_flags, flags, DebugFlags::GPU_TIME_QUERIES) {
+            if enabled {
+                self.gpu_profile.enable_timers();
+            } else {
+                self.gpu_profile.disable_timers();
+            }
+        }
+        if let Some(enabled) = flag_changed(self.debug_flags, flags, DebugFlags::GPU_SAMPLE_QUERIES) {
+            if enabled {
+                self.gpu_profile.enable_samplers();
+            } else {
+                self.gpu_profile.disable_samplers();
+            }
+        }
+
+        self.debug_flags = flags;
+    }
+
+    /// Processes the result queue.
+    ///
+    /// Should be called before `render()`, as texture cache updates are done here.
+    fn update(&mut self) {
+        profile_scope!("update");
+
+        // Pull any pending results and return the most recent.
+        while let Ok(msg) = self.result_rx.try_recv() {
+            match msg {
+                ResultMsg::PublishDocument(
+                    document_id,
+                    mut doc,
+                    texture_update_list,
+                    profile_counters,
+                ) => {
+                    //TODO: associate `document_id` with target window
+                    self.pending_texture_updates.push(texture_update_list);
+                    self.pending_gpu_cache_updates.extend(doc.frame.gpu_cache_updates.take());
+                    self.backend_profile_counters = profile_counters;
+
+                    // Update the list of available epochs for use during reftests.
+                    // This is a workaround for https://github.com/servo/servo/issues/13149.
+                    for (pipeline_id, epoch) in &doc.pipeline_epoch_map {
+                        self.pipeline_epoch_map.insert(*pipeline_id, *epoch);
+                    }
+
+                    // Add a new document to the active set, expressed as a `Vec` in order
+                    // to re-order based on `DocumentLayer` during rendering.
+                    match self.active_documents.iter().position(|&(id, _)| id == document_id) {
+                        Some(pos) => {
+                            // If the document we are replacing must be drawn
+                            // (in order to update the texture cache), issue
+                            // a render just to off-screen targets.
+                            if self.active_documents[pos].1.frame.must_be_drawn() {
+                                self.render_impl(None).ok();
+                            }
+                            self.active_documents[pos].1 = doc;
+                        }
+                        None => self.active_documents.push((document_id, doc)),
+                    }
+                }
+                ResultMsg::UpdateResources {
+                    updates,
+                    cancel_rendering,
+                } => {
+                    self.pending_texture_updates.push(updates);
+                    self.update_texture_cache();
+                    // If we receive a `PublishDocument` message followed by this one
+                    // within the same update we need ot cancel the frame because we
+                    // might have deleted the resources in use in the frame due to a
+                    // memory pressure event.
+                    if cancel_rendering {
+                        self.active_documents.clear();
+                    }
+                }
+                ResultMsg::RefreshShader(path) => {
+                    self.pending_shader_updates.push(path);
+                }
+                ResultMsg::DebugOutput(output) => match output {
+                    DebugOutput::FetchDocuments(string) |
+                    DebugOutput::FetchClipScrollTree(string) => {
+                        self.debug_server.send(string);
+                    }
+                    #[cfg(feature = "capture")]
+                    DebugOutput::SaveCapture(config, deferred) => {
+                        self.save_capture(config, deferred);
+                    }
+                    #[cfg(feature = "capture")]
+                    DebugOutput::LoadCapture(root) => {
+                        self.active_documents.clear();
+                        self.load_capture(root);
+                    }
+                },
+                ResultMsg::DebugCommand(command) => {
+                    self.handle_debug_command(command);
+                }
+            }
+        }
+    }
+
+    fn layers_are_bouncing_back(&self) -> bool {
+        self.active_documents
+            .iter()
+            .any(|&(_, ref render_doc)| !render_doc.layers_bouncing_back.is_empty())
+    }
 
     // De-initialize the Renderer safely, assuming the GL is still alive and active.
-    pub fn deinit(mut self) {
+    fn deinit(mut self) {
         //Note: this is a fake frame, only needed because texture deletion is require to happen inside a frame
         self.device.begin_frame();
         self.gpu_cache_texture.deinit(&mut self.device);
@@ -4698,27 +4667,6 @@ impl DebugServer {
 
     pub fn send(&mut self, _: String) {}
 }
-
-// Some basic statistics about the rendered scene
-// that we can use in wrench reftests to ensure that
-// tests are batching and/or allocating on render
-// targets as we expect them to.
-pub struct RendererStats {
-    pub total_draw_calls: usize,
-    pub alpha_target_count: usize,
-    pub color_target_count: usize,
-}
-
-impl RendererStats {
-    pub fn empty() -> Self {
-        RendererStats {
-            total_draw_calls: 0,
-            alpha_target_count: 0,
-            color_target_count: 0,
-        }
-    }
-}
-
 
 #[cfg(feature = "capture")]
 #[derive(Deserialize, Serialize)]
